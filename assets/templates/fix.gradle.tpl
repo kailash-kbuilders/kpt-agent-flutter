@@ -1,0 +1,10 @@
+// Applied to every Gradle build on the CI machine (init script).
+allprojects {
+    afterEvaluate { p ->
+        def ext = p.extensions.findByName('android')
+        if (ext != null) {
+            // some plugins are compiled against older SDKs than their dependencies need
+            try { ext.compileSdkVersion(36) } catch (Throwable ignored) {}
+        }
+    }
+}
