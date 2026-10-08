@@ -17,6 +17,9 @@ RULES FOR FILE MANIPULATION:
 5. Dependencies: use the EXECUTE_COMMAND action "flutter pub add <package>" (or edit pubspec.yaml). Do not run build commands.
 6. The app is built later on GitHub Actions, so the code must compile with the stable Flutter SDK. Use only well-known packages.
 7. Output ONLY one JSON object. No markdown fences, no text before or after it.
+8. JSON string escaping: inside "content" use \n for newlines, \" for double quotes and \\ for a backslash. NEVER write \' or \$ - write ' and $ as plain characters (Dart string interpolation like $name or ${x} stays exactly as in Dart). To put a newline escape inside Dart code write \\n.
+9. Prefer single quotes in Dart code so fewer characters need escaping.
+10. The whole app must be complete and compile: every import used must exist, every referenced class must be created, all required packages must be added with "flutter pub add".
 
 JSON Schema Response Format:
 {
@@ -67,9 +70,72 @@ JSON Schema Response Format:
     final a = s.indexOf('{');
     final b = s.lastIndexOf('}');
     if (a < 0 || b <= a) throw const FormatException('No JSON object found');
-    final decoded = jsonDecode(s.substring(a, b + 1));
+    final decoded = _lenientDecode(s.substring(a, b + 1));
     if (decoded is! Map) throw const FormatException('JSON is not an object');
     return Map<String, dynamic>.from(decoded);
+  }
+
+
+  static dynamic _lenientDecode(String src) {
+    try {
+      return jsonDecode(src);
+    } on FormatException {
+      return jsonDecode(repairJson(src));
+    }
+  }
+
+  /// Fixes common model mistakes inside JSON strings: invalid escapes such as
+  /// \' or \$ (Dart-style), stray backslashes, raw newlines/tabs.
+  static String repairJson(String s) {
+    final sb = StringBuffer();
+    final hex4 = RegExp(r'^[0-9a-fA-F]{4}$');
+    var inStr = false;
+    for (var i = 0; i < s.length; i++) {
+      final c = s[i];
+      if (!inStr) {
+        if (c == '"') inStr = true;
+        sb.write(c);
+        continue;
+      }
+      if (c == '\\') {
+        if (i + 1 >= s.length) {
+          sb.write('\\\\');
+          continue;
+        }
+        final n = s[i + 1];
+        if ('"\\/bfnrt'.contains(n)) {
+          sb.write(c);
+          sb.write(n);
+          i++;
+        } else if (n == 'u') {
+          if (i + 6 <= s.length && hex4.hasMatch(s.substring(i + 2, i + 6))) {
+            sb.write(s.substring(i, i + 6));
+            i += 5;
+          } else {
+            sb.write('\\\\');
+          }
+        } else if (n == "'" || n == r'$') {
+          sb.write(n);
+          i++;
+        } else {
+          sb.write('\\\\');
+        }
+        continue;
+      }
+      if (c == '"') {
+        inStr = false;
+        sb.write(c);
+      } else if (c == '\n') {
+        sb.write('\\n');
+      } else if (c == '\r') {
+        continue;
+      } else if (c == '\t') {
+        sb.write('\\t');
+      } else {
+        sb.write(c);
+      }
+    }
+    return sb.toString();
   }
 
   static AgentPlan parse(String raw) {
